@@ -1,33 +1,8 @@
-Real & Nominal Exchange Rate Explorer
+Real vs Nominal Exchange Rates (IMF data)
 
-A Streamlit app that pulls monthly CPI and exchange-rate data from the IMF and plots the nominal exchange rate and a real exchange rate index for any two IMF countries (or the Euro area).
+A Streamlit app that compares the nominal exchange rate and the real exchange rate index for any two IMF countries (or the Euro area) using monthly data from the IMF SDMX 3.0 API.
 
-Economics
-S(t) = units of Country 2 currency per 1 unit of Country 1 currency
-P1(t), P2(t) = monthly CPI of Country 1 and Country 2
-RER(t) = S(t) × P1(t) / P2(t)
-RER* = average of RER(t) over valid months in the selected sample
-Real Index(t) = 100 × RER(t) / RER* (recomputed whenever the dates change)
-Nominal S(t) is plotted in actual currency units (not normalized)
-
-IMF exchange rates are local-currency units per USD (XDC_USD). The app converts: S = (Country 2 per USD) / (Country 1 per USD). For the United States the rate is set to 1 if the IMF returns no series.
-
-A rising Real Index means Country 1's currency has appreciated in real terms against Country 2's (Country 1 goods have become relatively more expensive).
-
-Data
-Series	IMF key	Dataflow
-CPI (all items, index)	{ISO3}.CPI._T.IX.M	IMF.STA/CPI
-Exchange rate (period average)	{ISO3}.XDC_USD.PA_RT.M	IMF.STA/ER
-
-Base URL: https://api.imf.org/external/sdmx/3.0. Euro area code: G163. Data are requested from January 1976 onward; many countries start later, and some have gaps. Months where any of S, P1, P2 is missing are excluded from RER* and the charts, and the app tells you how many were dropped.
-
-Features
-Country 1 / Country 2 selectors (IMF members + Euro area)
-Month-range slider for the sample period
-Chart modes: Real, Nominal, or Both (dual y-axes)
-CSV download of all observations and calculations in the selected window (CPIs, rates per USD, S, RER, Real Index, RER*, validity flag)
-Responses cached for 24 hours
-Run
+Setup
 
 Requires Python 3.12.
 
@@ -35,9 +10,52 @@ bash
 python3.12 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+Run
+bash
 streamlit run app.py
-Caveats
-Only the IMF endpoint format given in the assignment hints was available to me; I could not test it live. The app requests SDMX-CSV first and falls back to SDMX-JSON, and parses TIME_PERIOD/OBS_VALUE. If the IMF changes dataflow IDs (IMF.STA/CPI, IMF.STA/ER) or the version path, edit the CPI_FLOW / ER_FLOW constants at the top of app.py.
-Individual euro-area members report legacy national-currency rates before joining the euro; for a euro-consistent series use the Euro area (G163).
-Some countries have discontinued or rebased CPI series, or hyperinflation episodes, so the index can be extreme.
-Country list is hard-coded; countries without IMF data show an explanatory error.
+
+The app opens at http://localhost:8501. It needs internet access to https://api.imf.org.
+
+How to use
+Pick Country 1 (base currency) and Country 2 (quote currency). The Euro area is IMF code G163.
+Choose the sample start and end month. RER* is recomputed whenever the window changes.
+Toggle Real / Nominal / Both. "Both" uses two y-axes: nominal S(t) on the left in actual currency units, Real Index on the right.
+Download the CSV of every month in the window, including dropped months (flagged invalid).
+Data
+Series	Dataflow	Key
+CPI (index)	IMF.STA:CPI	{ISO3}.CPI._T.IX.M
+Exchange rate (period average, local currency per USD)	IMF.STA:ER	{ISO3}.XDC_USD.PA_RT.M
+
+Requests go to https://api.imf.org/external/sdmx/3.0/data/dataflow/IMF.STA/{flow}/+/{key} with a c[TIME_PERIOD]=ge:1976-01 filter, requesting SDMX-CSV. The dataflow IDs, version and keys are constants at the top of app.py if the IMF changes them. Responses are cached for 6 hours (st.cache_data); failed requests are not cached.
+
+Formulas
+
+IMF exchange rates are local currency units per 1 USD. With E1, E2 the IMF rates for Country 1 and 2 and P1, P2 their CPIs:
+
+S(t) = E2(t) / E1(t) — units of Country 2 currency per 1 unit of Country 1 currency
+RER(t) = S(t) × P1(t) / P2(t)
+RER* = mean of RER(t) over valid months in the selected window
+Real Index(t) = 100 × RER(t) / RER*
+
+A month is valid only if both CPIs and both exchange rates are present and positive. Invalid months are excluded from RER* and the chart, and the app reports how many were dropped and why. In the CSV they appear with valid_flag = False, an invalid_reason, and blank S / RER / Real Index.
+
+Interpretation: a higher RER means Country 1's goods are relatively more expensive (real appreciation of Country 1's currency) versus its sample average.
+
+CSV columns
+
+month, country_1, country_2, CPI_<c1>, CPI_<c2>, FX_<c1>_LCU_per_USD, FX_<c2>_LCU_per_USD, S_<c2>_per_<c1>, RER, RER_star, Real_Index, valid_flag, invalid_reason
+
+Known data limitations
+Coverage varies widely. Many countries lack monthly CPI or exchange rates back to 1976, or have gaps. Only months where all four inputs exist are used.
+RER* depends on the window. The Real Index is relative to the selected sample average, not an absolute or long-run equilibrium level. Different windows give different indices.
+CPI base years differ by country. This is harmless for the Real Index (the base cancels in the ratio to RER*), but the raw RER level is not comparable across pairs or base-year choices.
+United States: the IMF does not publish a USD-per-USD series, so the app sets the US rate to 1.0.
+Euro area (G163): CPI and the euro exchange rate begin when the aggregate series begins (euro from 1999 in most cases); earlier months will be dropped. Individual euro members have their own legacy currencies before joining.
+Hyperinflation, redenominations and regime changes (e.g. Argentina, Venezuela, Zimbabwe) can create large breaks or unreliable values. Check the chart and CSV.
+Exchange rates are period averages (PA_RT), not end-of-period, and CPI is the headline all-items index (_T).
+Country list is static. It is built into the app; countries without IMF series show an error rather than being hidden. IMF codes, dataflow versions and data are revised over time, and the SDMX 3.0 endpoint is relatively new, so the response format may change.
+Latest months may be missing or revised as the IMF updates.
+Troubleshooting
+"Could not connect to the IMF API": check network/proxy settings.
+HTTP 4xx/5xx errors: the message includes the request URL; open it in a browser to inspect the response. Failures are not cached, so just retry.
+No series found: that country has no data for the requested key at the IMF.
